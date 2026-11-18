@@ -1,0 +1,48 @@
+# Nightly pipeline: download new USGS data -> run models -> save forecasts.
+# Runs automatically every morning, and can be run by hand from the
+# GitHub "Actions" tab (pick "Nightly forecast" -> "Run workflow").
+name: Nightly forecast
+
+on:
+  schedule:
+    - cron: "17 12 * * *"   # 12:17 UTC = ~5-6 am in Colorado
+  workflow_dispatch:         # adds the manual "Run workflow" button
+
+permissions:
+  contents: write            # lets the job commit the new data back to the repo
+
+jobs:
+  forecast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true   # fast pre-built packages
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: |
+            any::dataRetrieval
+            any::arrow
+            any::dplyr
+
+      - name: Download new USGS data
+        env:
+          API_USGS_PAT: ${{ secrets.API_USGS_PAT }}   # optional; see README
+        run: Rscript R/ingest_usgs.R
+
+      - name: Make forecasts
+        run: Rscript R/predict.R
+
+      - name: Commit new data
+        run: |
+          git config user.name  "forecast-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/
+          git diff --cached --quiet && echo "No changes" && exit 0
+          git commit -m "Nightly data + forecast $(TZ=America/Denver date +%F)"
+          git pull --rebase
+          git push
